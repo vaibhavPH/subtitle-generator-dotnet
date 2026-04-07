@@ -286,6 +286,7 @@ This version uses [Whisper.net](https://github.com/sandrohanea/whisper.net) (C++
 | Out of memory | Use a smaller model: `--model tiny` or `--model base`. Close other programs. |
 | Very slow | Normal on CPU. Use `--model tiny` for fastest results. Consider GPU (see FAQ). |
 | Model download fails | Check your internet connection. The model downloads from Hugging Face on first run. |
+| `AVX is not supported` | Your CPU doesn't support AVX instructions. Run: `dotnet remove package Whisper.net.Runtime` then `dotnet add package Whisper.net.Runtime.NoAvx` |
 
 ---
 
@@ -306,4 +307,4 @@ subtitle-generator-dotnet/
 |---------|---------|---------|
 | [Spectre.Console](https://www.nuget.org/packages/Spectre.Console) | 0.55.0 | Rich terminal UI (tables, progress bars, colors) |
 | [Whisper.net](https://www.nuget.org/packages/Whisper.net) | 1.9.0 | .NET bindings for whisper.cpp speech recognition |
-| [Whisper.net.Runtime](https://www.nuget.org/packages/Whisper.net.Runtime) | 1.9.0 | Native whisper.cpp runtime (CPU) |
+| [Whisper.net.Runtime.NoAvx](https://www.nuget.org/packages/Whisper.net.Runtime.NoAvx) | 1.9.0 | Native whisper.cpp runtime (CPU, no AVX required) |
