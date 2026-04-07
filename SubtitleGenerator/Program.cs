@@ -129,7 +129,7 @@ await AnsiConsole.Progress()
             var relativePath = Path.GetRelativePath(targetFolder, videoPath);
             var srtPath = Path.ChangeExtension(videoPath, ".srt");
 
-            overallTask.Description = $"[bold][{i + 1}/{videosToProcess.Count}][/] {Markup.Escape(relativePath)}";
+            overallTask.Description = $"[bold][[{i + 1}/{videosToProcess.Count}]][/] {Markup.Escape(relativePath)}";
 
             try
             {
