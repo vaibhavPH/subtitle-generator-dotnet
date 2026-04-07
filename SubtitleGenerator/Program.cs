@@ -20,6 +20,105 @@ var (targetFolder, modelName, language, threads) = ParseArguments(args);
 threads = threads <= 0 ? Environment.ProcessorCount : threads;
 
 // ============================================================================
+//  Interactive quality vs. performance calibration
+// ============================================================================
+var preset = AnsiConsole.Prompt(
+    new SelectionPrompt<string>()
+        .Title("[bold cyan]Select a performance preset:[/]")
+        .PageSize(5)
+        .AddChoices("Fast", "Balanced", "Quality", "Custom"));
+
+string samplingStrategy;
+int beamSize;
+int bestOf;
+float temperature;
+float entropyThreshold;
+
+switch (preset)
+{
+    case "Fast":
+        modelName = "tiny";
+        samplingStrategy = "greedy";
+        beamSize = 1;
+        bestOf = 1;
+        temperature = 0f;
+        entropyThreshold = 2.8f;
+        threads = Environment.ProcessorCount;
+        break;
+    case "Quality":
+        modelName = "medium";
+        samplingStrategy = "beam";
+        beamSize = 8;
+        bestOf = 5;
+        temperature = 0.2f;
+        entropyThreshold = 2.4f;
+        threads = Environment.ProcessorCount;
+        break;
+    case "Custom":
+        modelName = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("[bold]Whisper model size[/] [dim](larger = better quality, slower)[/]")
+                .AddChoices("tiny", "base", "small", "medium", "large"));
+
+        samplingStrategy = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("[bold]Sampling strategy[/] [dim](greedy = fast, beam = more accurate)[/]")
+                .AddChoices("greedy", "beam"));
+
+        if (samplingStrategy == "beam")
+        {
+            beamSize = AnsiConsole.Prompt(
+                new TextPrompt<int>("[bold]Beam size[/] [dim](1-10, higher = slower but better)[/]:")
+                    .DefaultValue(5)
+                    .Validate(v => v is >= 1 and <= 10
+                        ? ValidationResult.Success()
+                        : ValidationResult.Error("[red]Must be between 1 and 10[/]")));
+        }
+        else
+        {
+            beamSize = 1;
+        }
+
+        bestOf = AnsiConsole.Prompt(
+            new TextPrompt<int>("[bold]Best-of decodings[/] [dim](1-10, higher = slower but picks best result)[/]:")
+                .DefaultValue(1)
+                .Validate(v => v is >= 1 and <= 10
+                    ? ValidationResult.Success()
+                    : ValidationResult.Error("[red]Must be between 1 and 10[/]")));
+
+        temperature = AnsiConsole.Prompt(
+            new TextPrompt<float>("[bold]Temperature[/] [dim](0.0 = deterministic, higher = more creative)[/]:")
+                .DefaultValue(0.2f)
+                .Validate(v => v is >= 0f and <= 1f
+                    ? ValidationResult.Success()
+                    : ValidationResult.Error("[red]Must be between 0.0 and 1.0[/]")));
+
+        entropyThreshold = AnsiConsole.Prompt(
+            new TextPrompt<float>("[bold]Entropy threshold[/] [dim](lower = stricter fallback, default 2.4)[/]:")
+                .DefaultValue(2.4f)
+                .Validate(v => v is >= 0f and <= 5f
+                    ? ValidationResult.Success()
+                    : ValidationResult.Error("[red]Must be between 0.0 and 5.0[/]")));
+
+        threads = AnsiConsole.Prompt(
+            new TextPrompt<int>($"[bold]Threads[/] [dim](1-{Environment.ProcessorCount})[/]:")
+                .DefaultValue(Environment.ProcessorCount)
+                .Validate(v => v >= 1 && v <= Environment.ProcessorCount
+                    ? ValidationResult.Success()
+                    : ValidationResult.Error($"[red]Must be between 1 and {Environment.ProcessorCount}[/]")));
+        break;
+    default: // Balanced
+        modelName = "base";
+        samplingStrategy = "beam";
+        beamSize = 5;
+        bestOf = 1;
+        temperature = 0.2f;
+        entropyThreshold = 2.4f;
+        threads = Environment.ProcessorCount;
+        break;
+}
+
+// ============================================================================
 //  Display banner
 // ============================================================================
 var headerTable = new Table()
@@ -28,7 +127,9 @@ var headerTable = new Table()
     .AddColumn(new TableColumn("[bold cyan]Subtitle Generator[/]").Centered())
     .HideHeaders();
 
+headerTable.AddRow($"[bold]Preset[/]   : [green]{preset}[/]");
 headerTable.AddRow($"[bold]Model[/]    : [green]{modelName}[/]");
+headerTable.AddRow($"[bold]Strategy[/] : [green]{samplingStrategy}[/]{(samplingStrategy == "beam" ? $" (beam size: {beamSize})" : $" (best-of: {bestOf})")}");
 headerTable.AddRow($"[bold]Threads[/]  : [green]{threads}[/] / {Environment.ProcessorCount} available");
 headerTable.AddRow($"[bold]Language[/] : [green]{(string.IsNullOrEmpty(language) ? "auto-detect" : language)}[/]");
 headerTable.AddRow($"[bold]Folder[/]   : [green]{Markup.Escape(targetFolder)}[/]");
@@ -137,20 +238,42 @@ await AnsiConsole.Progress()
                 var wavPath = Path.Combine(Path.GetTempPath(), $"whisper_{Guid.NewGuid():N}.wav");
                 try
                 {
+                    var duration = await GetVideoDuration(ffmpegPath, videoPath);
+                    var durationSeconds = duration.TotalSeconds > 0 ? duration.TotalSeconds : 100;
+
+                    var videoTask = ctx.AddTask($"  [dim]{Markup.Escape(Path.GetFileName(videoPath))}[/]",
+                        maxValue: durationSeconds);
+
                     await ExtractAudio(ffmpegPath, videoPath, wavPath);
 
                     // Transcribe
-                    using var processor = whisperFactory.CreateBuilder()
+                    var builder = whisperFactory.CreateBuilder()
                         .WithLanguage(string.IsNullOrEmpty(language) ? "auto" : language)
                         .WithThreads(threads)
-                        .Build();
+                        .WithTemperature(temperature)
+                        .WithEntropyThreshold(entropyThreshold);
+
+                    if (samplingStrategy == "beam")
+                        builder = ((BeamSearchSamplingStrategyBuilder)builder
+                            .WithBeamSearchSamplingStrategy())
+                            .WithBeamSize(beamSize).ParentBuilder;
+                    else
+                        builder = ((GreedySamplingStrategyBuilder)builder
+                            .WithGreedySamplingStrategy())
+                            .WithBestOf(bestOf).ParentBuilder;
+
+                    using var processor = builder.Build();
 
                     var segments = new List<SubtitleSegment>();
                     await using var audioStream = File.OpenRead(wavPath);
                     await foreach (var result in processor.ProcessAsync(audioStream))
                     {
                         segments.Add(new SubtitleSegment(result.Start, result.End, result.Text));
+                        videoTask.Value = Math.Min(result.End.TotalSeconds, durationSeconds);
                     }
+
+                    videoTask.Value = durationSeconds;
+                    videoTask.Description = $"  [green]{Markup.Escape(Path.GetFileName(videoPath))}[/]";
 
                     WriteSrt(segments, srtPath);
                     totalSuccess++;
@@ -287,6 +410,35 @@ static (List<string> videosToProcess, int alreadyHaveSrt) ScanForVideos(string t
     return (videos, alreadyCount);
 }
 
+static async Task<TimeSpan> GetVideoDuration(string ffmpegPath, string videoPath)
+{
+    var ffprobePath = Path.Combine(Path.GetDirectoryName(ffmpegPath)!,
+        OperatingSystem.IsWindows() ? "ffprobe.exe" : "ffprobe");
+
+    if (!File.Exists(ffprobePath))
+        return TimeSpan.Zero;
+
+    var psi = new ProcessStartInfo
+    {
+        FileName = ffprobePath,
+        Arguments = $"-v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{videoPath}\"",
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+    };
+
+    using var process = Process.Start(psi)!;
+    var stdout = await process.StandardOutput.ReadToEndAsync();
+    await process.StandardError.ReadToEndAsync();
+    await process.WaitForExitAsync();
+
+    return double.TryParse(stdout.Trim(), System.Globalization.NumberStyles.Float,
+        System.Globalization.CultureInfo.InvariantCulture, out var seconds)
+        ? TimeSpan.FromSeconds(seconds)
+        : TimeSpan.Zero;
+}
+
 static async Task ExtractAudio(string ffmpegPath, string videoPath, string wavPath)
 {
     var psi = new ProcessStartInfo
@@ -300,11 +452,18 @@ static async Task ExtractAudio(string ffmpegPath, string videoPath, string wavPa
     };
 
     using var process = Process.Start(psi)!;
+
+    // Read stdout/stderr concurrently to prevent buffer deadlocks.
+    // FFmpeg writes verbose output to stderr; if the pipe buffer fills,
+    // FFmpeg blocks and WaitForExitAsync never completes.
+    var stderrTask = process.StandardError.ReadToEndAsync();
+    var stdoutTask = process.StandardOutput.ReadToEndAsync();
     await process.WaitForExitAsync();
+    var error = await stderrTask;
+    await stdoutTask;
 
     if (process.ExitCode != 0)
     {
-        var error = await process.StandardError.ReadToEndAsync();
         throw new Exception($"FFmpeg failed (exit {process.ExitCode}): {error[..Math.Min(error.Length, 200)]}");
     }
 }
