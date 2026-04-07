@@ -29,6 +29,7 @@ Most video players (VLC, PotPlayer, mpv) will **automatically** load the subtitl
   - [Linux](#linux)
 - [Usage](#usage)
   - [Basic Usage](#basic-usage)
+  - [Prompt Walkthrough](#prompt-walkthrough)
   - [Command-Line Options](#command-line-options)
   - [Examples](#examples)
 - [Performance Presets](#performance-presets)
@@ -152,6 +153,76 @@ dotnet run -- "D:\Videos\My Course"
 ```
 
 > **First run** will download the Whisper model (~142 MB for `base`). This only happens once.
+
+### Prompt Walkthrough
+
+When you launch the app, you'll be guided through an interactive setup before processing begins:
+
+**Step 1 — Select a performance preset:**
+```
+Select a performance preset:
+> Fast
+  Balanced
+  Quality
+  Custom
+```
+Use arrow keys to navigate, Enter to select. If you pick **Custom**, you'll be asked to configure each parameter individually (see below).
+
+**Step 1a — Custom mode prompts (only if you selected Custom):**
+```
+Whisper model size (larger = better quality, slower):
+> tiny
+  base
+  small
+  medium
+  large
+
+Sampling strategy (greedy = fast, beam = more accurate):
+> greedy
+  beam
+
+Best-of decodings (1-10, higher = slower but picks best result): 1
+Temperature (0.0 = deterministic, higher = more creative): 0.2
+Entropy threshold (lower = stricter fallback, default 2.4): 2.4
+Threads (1-16): 16
+```
+If you select **beam** as the strategy, you'll also be asked for the beam size (1–10).
+
+**Step 2 — Configuration banner is displayed:**
+```
+╭──────────────────────────────────────────────╮
+│             Subtitle Generator               │
+├──────────────────────────────────────────────┤
+│ Preset   : Fast                              │
+│ Model    : tiny                              │
+│ Strategy : greedy (best-of: 1)               │
+│ Threads  : 16 / 16 available                 │
+│ Language  : en                               │
+│ Folder   : D:\Videos\My Course               │
+╰──────────────────────────────────────────────╯
+```
+
+**Step 3 — Processing begins with per-video progress:**
+```
+ ───────────────────────────────────────────────
+  Videos needing subtitles   3
+  Already have subtitles     1
+ ───────────────────────────────────────────────
+
+  [1/3] Lecture 01.mp4
+    Lecture 01.mp4  ━━━━━━━━━━━━━━━━━━━━━━━  62%  00:01:12
+```
+The progress bar advances in real time as Whisper processes the audio, based on the current timestamp relative to the video's total duration.
+
+**Step 4 — Summary:**
+```
+╭──────────────────╮
+│     Results      │
+├──────────────────┤
+│ Time    : 2m 14s │
+│ Success : 3      │
+╰──────────────────╯
+```
 
 ### Command-Line Options
 
