@@ -29,10 +29,13 @@ Most video players (VLC, PotPlayer, mpv) will **automatically** load the subtitl
   - [Linux](#linux)
 - [Usage](#usage)
   - [Basic Usage](#basic-usage)
+  - [Prompt Walkthrough](#prompt-walkthrough)
   - [Command-Line Options](#command-line-options)
   - [Examples](#examples)
+- [Performance Presets](#performance-presets)
 - [Settings](#settings)
   - [Whisper Model (Accuracy)](#whisper-model-accuracy)
+  - [Sampling Strategy](#sampling-strategy)
   - [CPU Threads](#cpu-threads)
   - [Language](#language)
 - [FAQ](#faq)
@@ -42,11 +45,12 @@ Most video players (VLC, PotPlayer, mpv) will **automatically** load the subtitl
 
 ## How It Works
 
-1. **Scans** the target folder (and all subfolders) for video files
-2. **Skips** any video that already has a matching `.srt` file
-3. **Extracts** audio from the video using FFmpeg (converted to 16kHz mono WAV)
-4. **Transcribes** the audio using the Whisper AI model via Whisper.net
-5. **Saves** the transcription as a timestamped `.srt` subtitle file
+1. **Prompts** you to select a performance preset (Fast, Balanced, Quality, or Custom)
+2. **Scans** the target folder (and all subfolders) for video files
+3. **Skips** any video that already has a matching `.srt` file
+4. **Extracts** audio from the video using FFmpeg (converted to 16kHz mono WAV)
+5. **Transcribes** the audio using the Whisper AI model via Whisper.net, showing a **per-video progress bar** that advances in real time
+6. **Saves** the transcription as a timestamped `.srt` subtitle file
 
 On the **first run**, the Whisper model is downloaded automatically (~142 MB for `base`) and cached at `~/.cache/whisper-net/`. Subsequent runs start instantly.
 
@@ -150,6 +154,76 @@ dotnet run -- "D:\Videos\My Course"
 
 > **First run** will download the Whisper model (~142 MB for `base`). This only happens once.
 
+### Prompt Walkthrough
+
+When you launch the app, you'll be guided through an interactive setup before processing begins:
+
+**Step 1 — Select a performance preset:**
+```
+Select a performance preset:
+> Fast
+  Balanced
+  Quality
+  Custom
+```
+Use arrow keys to navigate, Enter to select. If you pick **Custom**, you'll be asked to configure each parameter individually (see below).
+
+**Step 1a — Custom mode prompts (only if you selected Custom):**
+```
+Whisper model size (larger = better quality, slower):
+> tiny
+  base
+  small
+  medium
+  large
+
+Sampling strategy (greedy = fast, beam = more accurate):
+> greedy
+  beam
+
+Best-of decodings (1-10, higher = slower but picks best result): 1
+Temperature (0.0 = deterministic, higher = more creative): 0.2
+Entropy threshold (lower = stricter fallback, default 2.4): 2.4
+Threads (1-16): 16
+```
+If you select **beam** as the strategy, you'll also be asked for the beam size (1–10).
+
+**Step 2 — Configuration banner is displayed:**
+```
+╭──────────────────────────────────────────────╮
+│             Subtitle Generator               │
+├──────────────────────────────────────────────┤
+│ Preset   : Fast                              │
+│ Model    : tiny                              │
+│ Strategy : greedy (best-of: 1)               │
+│ Threads  : 16 / 16 available                 │
+│ Language  : en                               │
+│ Folder   : D:\Videos\My Course               │
+╰──────────────────────────────────────────────╯
+```
+
+**Step 3 — Processing begins with per-video progress:**
+```
+ ───────────────────────────────────────────────
+  Videos needing subtitles   3
+  Already have subtitles     1
+ ───────────────────────────────────────────────
+
+  [1/3] Lecture 01.mp4
+    Lecture 01.mp4  ━━━━━━━━━━━━━━━━━━━━━━━  62%  00:01:12
+```
+The progress bar advances in real time as Whisper processes the audio, based on the current timestamp relative to the video's total duration.
+
+**Step 4 — Summary:**
+```
+╭──────────────────╮
+│     Results      │
+├──────────────────┤
+│ Time    : 2m 14s │
+│ Success : 3      │
+╰──────────────────╯
+```
+
 ### Command-Line Options
 
 | Option | Short | Default | Description |
@@ -188,6 +262,30 @@ dotnet run -- "D:\Videos\My Course" --model small --threads 4 --language en
 
 ---
 
+## Performance Presets
+
+When you run the app, you'll be prompted to select a preset that controls the quality vs. speed trade-off:
+
+| Preset | Model | Strategy | Beam Size | Best-of | Temperature | Best For |
+|--------|-------|----------|-----------|---------|-------------|----------|
+| **Fast** | `tiny` | Greedy | 1 | 1 | 0.0 | Quick drafts, clear audio |
+| **Balanced** | `base` | Beam search | 5 | 1 | 0.2 | General use (default) |
+| **Quality** | `medium` | Beam search | 8 | 5 | 0.2 | Best accuracy, slower |
+| **Custom** | You pick | You pick | You pick | You pick | You pick | Full control |
+
+**Example:** A 3-minute video that takes ~6 minutes on Balanced can finish in under a minute on Fast.
+
+The **Custom** preset lets you fine-tune each parameter individually:
+- **Model size** — tiny/base/small/medium/large
+- **Sampling strategy** — greedy (fast) or beam search (more accurate)
+- **Beam size** — number of beams to explore (1–10, beam search only)
+- **Best-of decodings** — run N decodings and pick the best (1–10)
+- **Temperature** — 0.0 = deterministic, higher = more random
+- **Entropy threshold** — controls decoder fallback sensitivity
+- **Threads** — CPU thread count
+
+---
+
 ## Settings
 
 ### Whisper Model (Accuracy)
@@ -208,6 +306,18 @@ Bigger models produce more accurate subtitles but take longer, especially on CPU
 - **NVIDIA GPU available:** `medium` or `large`
 
 The model is downloaded once and cached at `~/.cache/whisper-net/`.
+
+### Sampling Strategy
+
+Controls how Whisper decodes speech into text.
+
+| Strategy | Speed | Accuracy | How It Works |
+|----------|-------|----------|--------------|
+| **Greedy** | Fast | Good | Picks the most likely token at each step |
+| **Beam search** | Slower | Better | Explores multiple candidate sequences and picks the best |
+
+- **Beam size** (beam search only): More beams = more candidates explored = better results but slower. Default: 5.
+- **Best-of** (greedy): Runs multiple decodings and picks the one with highest confidence. Default: 1.
 
 ### CPU Threads
 
@@ -256,8 +366,7 @@ Yes. Press Ctrl+C to stop. Videos that already have `.srt` files are skipped on 
 No. If a `.srt` file already exists, that video is skipped.
 
 **Q: The subtitles have errors. How do I improve them?**
-Use a bigger model: `dotnet run -- . --model medium`
-Delete the `.srt` files you want to redo first.
+Select the **Quality** preset, or use **Custom** to pick a bigger model and beam search. Delete the `.srt` files you want to redo first.
 
 **Q: How much disk space do subtitle files use?**
 Almost none. A typical `.srt` is 5–20 KB. Even 1,000 videos use under 20 MB total.
@@ -283,8 +392,8 @@ This version uses [Whisper.net](https://github.com/sandrohanea/whisper.net) (C++
 | `dotnet` not recognized | Close and reopen your terminal. Verify with `dotnet --version`. |
 | `ffmpeg` not recognized | Close and reopen your terminal. The app can auto-detect winget installs. |
 | Shows 0 videos | Make sure the app is pointed at the right folder. Check video file extensions are supported. |
-| Out of memory | Use a smaller model: `--model tiny` or `--model base`. Close other programs. |
-| Very slow | Normal on CPU. Use `--model tiny` for fastest results. Consider GPU (see FAQ). |
+| Out of memory | Select the **Fast** preset or use a smaller model (`tiny`/`base`). Close other programs. |
+| Very slow | Normal on CPU. Select the **Fast** preset for quickest results. Consider GPU (see FAQ). |
 | Model download fails | Check your internet connection. The model downloads from Hugging Face on first run. |
 | `AVX is not supported` | Your CPU doesn't support AVX instructions. Run: `dotnet remove package Whisper.net.Runtime` then `dotnet add package Whisper.net.Runtime.NoAvx` |
 
